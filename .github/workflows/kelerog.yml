@@ -1,0 +1,40 @@
+name: Surveillance prix Kelerog
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # toutes les 5 minutes (minimum possible)
+  workflow_dispatch:         # permet de lancer à la main pour tester
+
+permissions:
+  contents: write            # pour sauvegarder state.json
+
+concurrency:
+  group: kelerog
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Vérifier le prix
+        run: python kelerog_check.py
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+
+      - name: Sauvegarder le dernier prix
+        run: |
+          if [ -n "$(git status --porcelain state.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git commit -m "maj prix"
+            git push
+          fi
