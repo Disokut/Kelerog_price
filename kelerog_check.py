@@ -2,6 +2,15 @@
 Vérifie UNE fois le prix Kelerog sur leskamas.com, compare avec le dernier
 relevé (state.json) et envoie une notification ntfy si le prix a changé.
 Prévu pour tourner dans GitHub Actions (le workflow le relance toutes les 5 min).
+
+Mise à jour refonte du site : les prix sont dans un <table> ; chaque ligne est
+  <th scope="row"><a>Kelerog</a></th>
+  <td>€2.950/M</td>   (Paypal / Skrill / SEPA)   -> prix1
+  <td>€2.920/M</td>   (Bitcoin)                   -> prix2
+  <td>3.245 USDT/M</td>
+  <td>32.450 DH/M</td>                            -> dhs
+  <td>21.682 CNY/M</td>
+  <td>Achat | Complet</td>                        -> statut
 """
 
 import json
@@ -25,35 +34,46 @@ HEADERS = {
     "Accept-Language": "fr-FR,fr;q=0.9",
 }
 
-MOTIF = re.compile(
-    SERVEUR
-    + r"\s+([\d.,]+)\s*€/M"
-    + r"\s+([\d.,]+)\s*€/M"
-    + r"\s+([\d.,]+)\s*Usd/M"
-    + r"\s+([\d.,]+)\s*Dhs/M"
-    + r"\s+([\d.,]+)\s*CNY/M"
-    + r"\s*(\S+)?",
-    re.IGNORECASE,
-)
+NOMBRE = re.compile(r"\d[\d.,]*")
+MOT = re.compile(r"[A-Za-zÀ-ÿ]+")
 
 
 def nombre(s):
-    return float(s.replace(",", "."))
+    m = NOMBRE.search(s)
+    if not m:
+        raise ValueError(f"pas de nombre dans {s!r}")
+    return float(m.group(0).replace(",", "."))
+
+
+def trouver_ligne(soup):
+    """Retrouve la <tr> du serveur via sa cellule d'en-tête de ligne."""
+    for th in soup.find_all("th", attrs={"scope": "row"}):
+        if th.get_text(strip=True).lower() == SERVEUR.lower():
+            return th.find_parent("tr")
+    return None
+
+
+def parser_html(html):
+    soup = BeautifulSoup(html, "html.parser")
+    ligne = trouver_ligne(soup)
+    if ligne is None:
+        return None
+    cellules = [td.get_text(" ", strip=True) for td in ligne.find_all("td")]
+    if len(cellules) < 6:
+        return None
+    mot = MOT.search(cellules[5])
+    return {
+        "prix1": nombre(cellules[0]),
+        "prix2": nombre(cellules[1]),
+        "dhs": f"{nombre(cellules[3]):.3f}",
+        "statut": mot.group(0) if mot else "?",
+    }
 
 
 def lire_prix():
     r = requests.get(URL, headers=HEADERS, timeout=20)
     r.raise_for_status()
-    texte = BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)
-    m = MOTIF.search(texte)
-    if not m:
-        return None
-    return {
-        "prix1": nombre(m.group(1)),
-        "prix2": nombre(m.group(2)),
-        "dhs": m.group(4),
-        "statut": m.group(6) or "?",
-    }
+    return parser_html(r.text)
 
 
 def charger_etat():
